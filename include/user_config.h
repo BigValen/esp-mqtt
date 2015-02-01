@@ -17,7 +17,7 @@
 
 
 #define STA_SSID "1OldbridgeClose-main"
-#define STA_PASS "sebastian"
+#define STA_PASS "passwd"
 #define STA_TYPE AUTH_WPA2_PSK
 
 #define MQTT_RECONNECT_TIMEOUT 	5	/*second*/
