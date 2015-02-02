@@ -107,7 +107,7 @@ void user_init(void)
 	uart_init(BIT_RATE_115200, BIT_RATE_115200);
 	INFO("\r\nSystem starting ...\r\n");
 	os_delay_us(1000000);
-  os_timer_disarm(&gpio0_timer); os_timer_disarm(&gpio0_timer);
+  os_timer_disarm(&gpio0_timer); os_timer_disarm(&gpio2_timer);
   os_timer_setfn(&gpio0_timer, (os_timer_func_t *)gpio0_timerfunc, BIT0);
   os_timer_setfn(&gpio2_timer, (os_timer_func_t *)gpio2_timerfunc, BIT2);
 
