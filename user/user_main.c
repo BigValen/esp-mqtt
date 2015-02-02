@@ -5,34 +5,35 @@
 #include "wifi.h"
 #include "config.h"
 #include "debug.h"
-#include "dht.h"
-#include "ds18b20.h"
 #include "gpio.h"
 #include "user_interface.h"
 
 MQTT_Client mqttClient;
 
-static volatile os_timer_t blink_timer;
-static volatile os_timer_t blank_timer;
+static volatile os_timer_t gpio0_timer;
+static volatile os_timer_t gpio2_timer;
 
-void blink_timerfunc(void *arg)
+void gpio0_timerfunc(void *arg)
 {
-  if (GPIO_REG_READ(GPIO_OUT_ADDRESS) & BIT2) {
-    //Set GPIO2 to LOW
-    gpio_output_set(0, BIT2, BIT2, 0);
-  } else {
-    //Set GPIO2 to HIGH
-    gpio_output_set(BIT2, 0, BIT2, 0);
-  }
+  INFO("TIMER0: Turning off switch\r\n");
+  gpio_output_set(0, BIT0, BIT0, 0);
+
+  INFO("TIMER0: Turned off switch \r\n");
+  //Set GPIO2 to HIGH / LED ON
+  gpio_output_set(BIT2, 0, BIT2, 0);
+  // Arm a timer to switch off the LED in 0.5s
+  INFO("TIMER0: Turned on LED\r\n");
+  os_timer_arm(&gpio2_timer, 500, 0);
+  INFO("TIMER0: armed\r\n");
 }
 
-void blank_timerfunc(void *arg)
+void gpio2_timerfunc(void *arg)
 {
+  // ARG = BIT2 etc.
   // Turn the LED off
-  INFO("Turn off LED\r\n");
+  INFO("TIMER: Turn off GPIO %d\r\n");
   gpio_output_set(0, BIT2, BIT2, 0);
 }
-
 
 
 void wifiConnectCb(uint8_t status)
@@ -47,6 +48,7 @@ void mqttConnectedCb(uint32_t *args)
 	INFO("MQTT: Connected\r\n");
 	MQTT_Subscribe(client, "/house/info", 0);
 	MQTT_Subscribe(client, "/house/light/0", 0);
+	MQTT_Subscribe(client, "/house/door/0", 0);
 	MQTT_Publish(client, "/sensors/temperature/0", "init", sizeof("init"), 0, 0);
 }
 
@@ -60,23 +62,13 @@ void mqttPublishedCb(uint32_t *args)
 {
 	MQTT_Client* client = (MQTT_Client*)args;
 	INFO("MQTT: Published\r\n");
-  // Turn the LED off
-  char temperature[20], success[20];
-  INFO("reading temp\r\n");
-  struct sensor_reading* reading;
-  reading = readDS18B20();
-  INFO("Got: success: %d, temp %18f", reading->success, reading->temperature);
-  os_sprintf(temperature, sizeof(temperature), "%18f", reading->temperature);
-  os_sprintf(success, sizeof(success), "%18f", reading->success);
-	MQTT_Publish(client, "/sensors/temperature/0", temperature, os_strlen(temperature), 0, 0);
-	MQTT_Publish(client, "/sensors/success/0", success, os_strlen(success), 0, 0);
 }
 
-void mqttDataCb(uint32_t *args, const char* topic, uint32_t topic_len, const char *data, uint32_t data_len)
+void mqttDataCb(uint32_t *args, const char* topic, uint32_t topic_len,
+  const char *data, uint32_t data_len)
 {
 	char topicBuf[64], dataBuf[64];
 	MQTT_Client* client = (MQTT_Client*)args;
-
 
 	os_memcpy(topicBuf, topic, topic_len);
 	topicBuf[topic_len] = 0;
@@ -89,8 +81,20 @@ void mqttDataCb(uint32_t *args, const char* topic, uint32_t topic_len, const cha
       INFO("Turn LED on!\r\n");
       //Set GPIO2 to HIGH / LED ON
       gpio_output_set(BIT2, 0, BIT2, 0);
+      // Arm a timer to switch off the LED in 5s
+      os_timer_arm(&gpio2_timer, 5000, 0);
+    }
+  } else if(!(strcmp("/house/door/0", topicBuf))) {
+    if(!(strcmp("toggle", dataBuf))) {
+      INFO("House door toggle!\r\n");
+      //Set GPIO0 to HIGH / LED ON
+      gpio_output_set(BIT0|BIT2, 0, BIT0|BIT2, 0);
+      // Arm a timer to release the switch in 100ms
+      os_timer_arm(&gpio0_timer, 100, 0);
       // Arm a timer to switch off the LED in 0.6s
-      os_timer_arm(&blank_timer, 2000, 0);
+      os_timer_arm(&gpio2_timer, 600, 0);
+    } else {
+      INFO("House door got unknown command %s\r\n", dataBuf);
     }
   }
 
@@ -103,18 +107,22 @@ void user_init(void)
 	uart_init(BIT_RATE_115200, BIT_RATE_115200);
 	INFO("\r\nSystem starting ...\r\n");
 	os_delay_us(1000000);
-  os_timer_disarm(&blank_timer);
-  os_timer_setfn(&blank_timer, (os_timer_func_t *)blank_timerfunc, NULL);
+  os_timer_disarm(&gpio0_timer); os_timer_disarm(&gpio0_timer);
+  os_timer_setfn(&gpio0_timer, (os_timer_func_t *)gpio0_timerfunc, BIT0);
+  os_timer_setfn(&gpio2_timer, (os_timer_func_t *)gpio2_timerfunc, BIT2);
 
   //Set GPIO2 to output mode (LED)
   PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
+  PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0);
   //Set GPIO2 low / LED OFF
-  gpio_output_set(0, BIT2, BIT2, 0);
+  gpio_output_set(0, BIT2|BIT0, BIT2|BIT0, 0);
 
 	CFG_Load();
 
-	MQTT_InitConnection(&mqttClient, sysCfg.mqtt_host, sysCfg.mqtt_port, SEC_NONSSL);
-	MQTT_InitClient(&mqttClient, sysCfg.device_id, sysCfg.mqtt_user, sysCfg.mqtt_pass, sysCfg.mqtt_keepalive);
+  MQTT_InitConnection(&mqttClient, sysCfg.mqtt_host, sysCfg.mqtt_port,
+      SEC_NONSSL);
+  MQTT_InitClient(&mqttClient, sysCfg.device_id, sysCfg.mqtt_user,
+      sysCfg.mqtt_pass, sysCfg.mqtt_keepalive);
 	MQTT_OnConnected(&mqttClient, mqttConnectedCb);
 	MQTT_OnDisconnected(&mqttClient, mqttDisconnectedCb);
 	MQTT_OnPublished(&mqttClient, mqttPublishedCb);
