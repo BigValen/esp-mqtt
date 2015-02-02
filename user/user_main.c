@@ -31,7 +31,7 @@ void gpio2_timerfunc(void *arg)
 {
   // ARG = BIT2 etc.
   // Turn the LED off
-  INFO("TIMER: Turn off GPIO %d\r\n");
+  INFO("TIMER2: Turn off GPIO %d\r\n");
   gpio_output_set(0, BIT2, BIT2, 0);
 }
 
