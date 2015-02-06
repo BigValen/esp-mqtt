@@ -16,18 +16,16 @@ static volatile os_timer_t led_timer;
 
 void switch_timerfunc(void *arg)
 {
-//  os_timer_disarm(&switch_timer);
   INFO("TIMER0: Turning off switch\r\n");
-  //Set GPIO2 & GPIO0 to LOW / LED OFF
-  gpio_output_set(0, BIT0|BIT2, BIT0|BIT2, 0);
+  // Turn the switch off (GPIO2)
+  gpio_output_set(0, BIT2, BIT2, 0);
 }
 
 void led_timerfunc(void *arg)
 {
-  // ARG = BIT2 etc.
-  // Turn the LED off
-  INFO("TIMER2: Turn off GPIO %d\r\n", arg);
-  gpio_output_set(0, BIT2, BIT2, 0);
+  // Turn the LED off (GPIO0)
+  INFO("TIMER2: Turn off LED on GPIO0 \r\n");
+  gpio_output_set(0, BIT0, BIT0, 0);
 }
 
 
@@ -44,6 +42,7 @@ void mqttConnectedCb(uint32_t *args)
   MQTT_Subscribe(client, "/house/info", 0);
   MQTT_Subscribe(client, "/house/light/0", 0);
   MQTT_Subscribe(client, "/house/door/0", 0);
+  MQTT_Subscribe(client, "/house/doorlight/0", 0);
   MQTT_Publish(client, "/sensors/temperature/0", "init", sizeof("init"), 0,
       0);
 }
@@ -73,25 +72,38 @@ void mqttDataCb(uint32_t *args, const char* topic, uint32_t topic_len,
   dataBuf[data_len] = 0;
   if(!(strcmp("/house/light/0", topicBuf))) {
     if(!(strcmp("on", dataBuf))) {
-      INFO("Turn light on!\r\n");
-      //Set GPIO2 to HIGH / LED ON
-      gpio_output_set(BIT2, 0, BIT2, 0);
-      // Arm a timer to switch off the LED in 5s
+      INFO("Flipping light\r\n");
+      //Set GPIO0 to HIGH / LED ON
+      gpio_output_set(BIT0, 0, BIT0, 0);
+      // Arm a timer to switch off the LED in 0.6s
       os_timer_disarm(&led_timer);
-      os_timer_arm(&led_timer, 500, 0);
+      os_timer_arm(&led_timer, 600, 0);
     } else {
-      INFO("LED got unknown command %s\r\n", dataBuf);
+      INFO("light got unknown command %s\r\n", dataBuf);
     }
   } else if (!(strcmp("/house/door/0", topicBuf))) {
     if (!(strcmp("toggle", dataBuf))) {
       INFO("Flipping Switch\r\n");
-      //Set GPIO0 to HIGH / LED ON
-      gpio_output_set(BIT0|BIT2, 0, BIT0|BIT2, 0);
-      // Arm a timer to switch off the LED in 0.6s
+      //Set GPIO2 to HIGH / LED ON
+      gpio_output_set(BIT2, 0, BIT2, 0);
+      // Arm a timer to turn off the switch & LED in 0.3s
       os_timer_disarm(&switch_timer);
-      os_timer_arm(&switch_timer, 4000, 0);
+      os_timer_arm(&switch_timer, 300, 0);
     } else {
-      INFO("House door got unknown command %s\r\n", dataBuf);
+      INFO("Door got unknown command %s\r\n", dataBuf);
+    }
+  } else if (!(strcmp("/house/doorlight/0", topicBuf))) {
+    if (!(strcmp("toggle", dataBuf))) {
+      INFO("Flipping Switch and Light\r\n");
+      //Set GPIO0 to HIGH / LED ON and GPIO2 to HIGH / relay ON
+      gpio_output_set(BIT0|BIT2, 0, BIT0|BIT2, 0);
+      // Arm a timer to turn off the switch & LED in 0.3s
+      os_timer_disarm(&switch_timer);
+      os_timer_arm(&switch_timer, 300, 0);
+      os_timer_disarm(&led_timer);
+      os_timer_arm(&led_timer, 302, 0);
+    } else {
+      INFO("Door and light got unknown command %s\r\n", dataBuf);
     }
   }
 
@@ -104,15 +116,17 @@ void user_init(void)
   uart_init(BIT_RATE_115200, BIT_RATE_115200);
   INFO("\r\nSystem starting ...\r\n");
   os_delay_us(1000000);
-  os_timer_disarm(&switch_timer); os_timer_disarm(&led_timer);
-  os_timer_setfn(&switch_timer, (os_timer_func_t *)switch_timerfunc, BIT0);
-  os_timer_setfn(&led_timer, (os_timer_func_t *)led_timerfunc, BIT2);
 
-  //Set GPIO2 to output mode (LED)
+  //Set GPIO0 and GPIO2 to output mode (LED and Relay)
   PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
   PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0);
-  //Set GPIO2 low / LED OFF
+  //Set all GPIOs low 
   gpio_output_set(0, BIT2|BIT0, BIT2|BIT0, 0);
+
+  os_timer_disarm(&switch_timer); os_timer_disarm(&led_timer);
+  os_timer_setfn(&switch_timer, (os_timer_func_t *)switch_timerfunc, NULL);
+  os_timer_setfn(&led_timer, (os_timer_func_t *)led_timerfunc, NULL);
+
 
   CFG_Load();
 
